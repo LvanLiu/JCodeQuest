@@ -581,6 +581,7 @@ public abstract class AbstractQueuedSynchronizer
      * @return node's predecessor
      */
     private Node enq(final Node node) {
+        //通过死循环实现自旋
         for (;;) {
             Node t = tail;
             if (t == null) { // Must initialize
@@ -620,7 +621,7 @@ public abstract class AbstractQueuedSynchronizer
                 return node;
             }
         }
-        //第一次尝试添加尾部失败
+        //第一次尝试添加尾部失败，意味着有并发锁发生，需要进行自旋
         enq(node);
         return node;
     }
@@ -639,6 +640,8 @@ public abstract class AbstractQueuedSynchronizer
     }
 
     /**
+     * 唤醒后继节点。
+     *
      * Wakes up node's successor, if one exists.
      *
      * @param node the node
@@ -649,6 +652,7 @@ public abstract class AbstractQueuedSynchronizer
          * to clear in anticipation of signalling.  It is OK if this
          * fails or if status is changed by waiting thread.
          */
+        //若头节点的状态小于0，则将其置为0，表示初始状态
         int ws = node.waitStatus;
         if (ws < 0)
             compareAndSetWaitStatus(node, ws, 0);
@@ -659,13 +663,17 @@ public abstract class AbstractQueuedSynchronizer
          * traverse backwards from tail to find the actual
          * non-cancelled successor.
          */
+        //找到头节点的后继节点
         Node s = node.next;
+        //如果新节点已经被取消
         if (s == null || s.waitStatus > 0) {
             s = null;
+            //从队列尾部开始，往前找最前面的一个waitStatus小于0的节点
             for (Node t = tail; t != null && t != node; t = t.prev)
                 if (t.waitStatus <= 0)
                     s = t;
         }
+        //唤醒后继节点对应的线程
         if (s != null)
             LockSupport.unpark(s.thread);
     }
@@ -754,10 +762,13 @@ public abstract class AbstractQueuedSynchronizer
 
         node.thread = null;
 
+        //获取当前节点的前驱节点，若该节点是取消状态，就循环向前获取，直到获取到一个有效的前驱节点。
         // Skip cancelled predecessors
         Node pred = node.prev;
         while (pred.waitStatus > 0)
             node.prev = pred = pred.prev;
+
+        //获取当前节点的前驱节点的后继节点，这里的predNext有可能是取消状态，也有可能是有效状态。
 
         // predNext is the apparent node to unsplice. CASes below will
         // fail if not, in which case, we lost race vs another cancel
@@ -775,6 +786,11 @@ public abstract class AbstractQueuedSynchronizer
         } else {
             // If successor needs signal, try to set pred's next-link
             // so it will get one. Otherwise wake it up to propagate.
+            // 如果当前节点不是尾节点，或者当前节点是尾节点但是CAS设置尾节点失败，
+            // 或者当前节点是尾节点但是CAS设置尾节点成功但是CAS设置当前节点的前驱节点的后继节点失败
+
+            // 如果前驱节点不是头节点，以及前驱节点是SIGNAL状态或者前驱节点的状态设置为SIGNAL成功，并且前驱节点的线程不为空
+            // 将当前的节点的后继节点设置为前驱节点的后继节点
             int ws;
             if (pred != head &&
                 ((ws = pred.waitStatus) == Node.SIGNAL ||
@@ -792,6 +808,16 @@ public abstract class AbstractQueuedSynchronizer
     }
 
     /**
+     * {@link #acquireQueued} 自旋在阻塞自己的线程之前会进行挂起预判。该方法的主要功能是：
+     * 将当前节点的有效前驱节点（是指有效节点不是{@link Node#CANCELLED}类型的节点）找到，
+     * 并且将有效前驱节点的状态设置为{@link Node#SIGNAL}，之后返回{code true}代表当前
+     * 线程可以马上被阻塞了。具体可以分为三种情况：
+     * 1. 如果前驱节点的状态为{@link Node#SIGNAL}，说明前驱的等待标记已设好，返回true表示设置完毕。
+     * 2. 如果前驱节点的状态为{@link Node#CANCELLED}，说明前驱节点本身不再等待了，需要跨越这些节点，然后再找到一个有效节点，
+     * 再把当前节点和这个有效节点的唤醒关系建立好，调整前驱节点的next指针为自己。
+     * 3. 如果是其他情况{@link Node#PROPAGATE}/{@link Node#CONDITION}，0(初始状态)，
+     * 那么通过CAS尝试设置前驱节点为{@link Node#SIGNAL}，表示只要前驱节点释放锁，当前节点就可以抢占锁了。
+     * <p>
      * Checks and updates status for a node that failed to acquire.
      * Returns true if thread should block. This is the main signal
      * control in all acquire loops.  Requires that pred == node.prev.
@@ -801,6 +827,7 @@ public abstract class AbstractQueuedSynchronizer
      * @return {@code true} if thread should block
      */
     private static boolean shouldParkAfterFailedAcquire(Node pred, Node node) {
+        //获取前驱节点的状态
         int ws = pred.waitStatus;
         if (ws == Node.SIGNAL)
             /*
@@ -809,22 +836,41 @@ public abstract class AbstractQueuedSynchronizer
              */
             return true;
         if (ws > 0) {
+            //当Pred前驱节点的抢占锁请求被取消，当前节点（如果被唤醒）就会循环移除所有被取消的前驱节点，直到找到未被取消的前驱。
+            //在移除所有被取消的前驱节点后，才方法将返回false，再次去执行acquireQueued自旋抢占
+
+            //前驱节点的状态是 CANCELLED 状态
             /*
              * Predecessor was cancelled. Skip over predecessors and
              * indicate retry.
              */
+            //循环找到有效的前驱节点
             do {
                 node.prev = pred = pred.prev;
             } while (pred.waitStatus > 0);
+            //调整前驱节点的next指针，也跳过了那些为CANCELLED的节点
             pred.next = node;
         } else {
+            //waitStatus == PROPAGATE: PROPAGATE 只能在使用共享锁的时候才会出现，并且只可能设置在head上。
+            //所以对于非队列尾节点，如果它的状态为0或PROPAGATE，那么它肯定是head。当等待队列中有多个节点时，
+            //如果head的状态为0或PROPAGATE，说明head处于一种中间状态，且此时有线程刚才释放锁了。而对于抢占锁线程来说，
+            //如果检测到这种状态，说明再次执行acquire方法是极有可能获得锁的。
+
+            //waitStatus == 0:有两种情况：
+            //1. node节点刚成功新队尾，但还没将旧队尾的状态设置为SIGNAL.
+            //2. node节点的前驱节点为head
+            //比如现在AQS等待队列中有很多节点正在等待，当前线程刚执行完毕addWaiter（节点刚成为新队尾），然后现在开始执行获取锁的死循环，
+            //此时节点的前驱（也就是旧队尾的状态）肯定还是0，然后死循环执行两次，第一次执行shouldParkAfterFailedAcquire()自然会检测到前驱状态为0，
+            //然后将0设置为SIGNAL，第二次执行shouldParkAfterFailedAcquire()，由于前驱节点为SIGNAL，当前线程直接返回true，去执行自我阻塞。
             /*
              * waitStatus must be 0 or PROPAGATE.  Indicate that we
              * need a signal, but don't park yet.  Caller will need to
              * retry to make sure it cannot acquire before parking.
              */
+            //如果前驱节点状态不是CANCELLED，也不是SIGNAL，就设置为SIGNAL状态
             compareAndSetWaitStatus(pred, ws, Node.SIGNAL);
         }
+        //返回false, 表示当前线程不可用，被阻塞
         return false;
     }
 
@@ -836,12 +882,15 @@ public abstract class AbstractQueuedSynchronizer
     }
 
     /**
+     * 暂停当前线程
      * Convenience method to park and then check if interrupted
      *
      * @return {@code true} if interrupted
      */
     private final boolean parkAndCheckInterrupt() {
+        //调用park使线进入waitting状态
         LockSupport.park(this);
+        //如果被唤醒，查看自己是否已经被中断了
         return Thread.interrupted();
     }
 
@@ -855,31 +904,46 @@ public abstract class AbstractQueuedSynchronizer
      */
 
     /**
+     * 当前Node节点线程在死循环中不断获取同步状态，并且不断在前驱节点上自旋，只有当前驱节点是头节点时
+     * 才能尝试获取锁，原因有：
+     * 1.头节点是成功获取同步状态（锁）的节点，而头节点的线程释放了同步状态以后，将会唤醒其后继节点，
+     * 后继节点的线程被唤醒后要检查自己的前驱节点是否为头节点。
+     * 2.维护同步队列的FIFO原则，节点进入同步队列之后，就进入自旋的过程，每个节点都在不断地执行{@code for}死循环。
+     * <p>
      * Acquires in exclusive uninterruptible mode for thread already in
      * queue. Used by condition wait methods as well as acquire.
      *
      * @param node the node
-     * @param arg the acquire argument
+     * @param arg  the acquire argument
      * @return {@code true} if interrupted while waiting
      */
     final boolean acquireQueued(final Node node, int arg) {
         boolean failed = true;
         try {
             boolean interrupted = false;
+            //自旋检查当前节点的前驱节点是否为头节点，才能获取锁
             for (;;) {
+                //获取节点的前驱节点
                 final Node p = node.predecessor();
+                //主线程（创建节点的线程）循环检查自己的前驱节点是否为head节点，前驱节点是head节点时，进一步调用子类的
+                //tryAcquire方法来获取锁
                 if (p == head && tryAcquire(arg)) {
+                    //获取锁成功后，将当前节点设置为head节点
                     setHead(node);
+                    //移除之前的头节点
                     p.next = null; // help GC
                     failed = false;
                     return interrupted;
                 }
+                //检查前一个节点的状态，预判当前锁失败的线程是否要挂起
                 if (shouldParkAfterFailedAcquire(p, node) &&
                     parkAndCheckInterrupt())
                     interrupted = true;
             }
         } finally {
+            //如果等待过程中没有成功获取资源（如timeout），那么取消节点在队列中的等待
             if (failed)
+                //取消请求，将当前节点从队列中移除
                 cancelAcquire(node);
         }
     }
