@@ -679,6 +679,8 @@ public abstract class AbstractQueuedSynchronizer
     }
 
     /**
+     * 唤醒共享锁队列中的线程。
+     *
      * Release action for shared mode -- signals successor and ensures
      * propagation. (Note: For exclusive mode, release just amounts
      * to calling unparkSuccessor of head if it needs signal.)
@@ -722,6 +724,7 @@ public abstract class AbstractQueuedSynchronizer
      * @param propagate the return value from a tryAcquireShared
      */
     private void setHeadAndPropagate(Node node, int propagate) {
+        //将当前被唤醒的线程所在节点设置成head节点
         Node h = head; // Record old head for check below
         setHead(node);
         /*
@@ -740,6 +743,10 @@ public abstract class AbstractQueuedSynchronizer
          * racing acquires/releases, so most need signals now or soon
          * anyway.
          */
+        //当满足指定条件时，继续调用doReleaseShared方法，唤醒后继节点对应的线程
+        //propagate > 0, 表示当前是共享锁，需要进行唤醒传递
+        //h==null和(h=head)==null, 这些条件是避免空指针的写法，这种情况出现的可能性是，原来的head节点正好从链表中断开，在临界的情况下满足
+        //该条件可能会出现这个情况
         if (propagate > 0 || h == null || h.waitStatus < 0 ||
             (h = head) == null || h.waitStatus < 0) {
             Node s = node.next;
@@ -1588,6 +1595,11 @@ public abstract class AbstractQueuedSynchronizer
         Node t = tail; // Read fields in reverse initialization order
         Node h = head;
         Node s;
+        //是否有后继节点的判断
+        //当h!=t不成立的时候，说明h头节点，t尾节点要么是同一个节点，要么是null, 此时返回false,表示没有后继节点
+        //当h!=t成立的时候，进一步检查head.next是否为null,如果为null,就返回true.什么情况下h!=t,同时h.next==null呢？有其他线程第一次正在入队时可能会出现。
+        //其他线程执行end方法，compareAndSetHead(node)完成，还没执行tail=head语句时，此时t=null、head=new Node()、head.next=null.
+        //如果h!=t成立，head.next!=null成立，判断head.next是不是当前线程，如果是就返回false,否则返回true
         return h != t &&
             ((s = h.next) == null || s.thread != Thread.currentThread());
     }
