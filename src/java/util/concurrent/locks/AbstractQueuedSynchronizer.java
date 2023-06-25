@@ -698,14 +698,20 @@ public abstract class AbstractQueuedSynchronizer
          * fails, if so rechecking.
          */
         for (;;) {
+            //每次循环时head都会变化，因为调用 unparkSuccessor() 方法后会将head指向后继节点
             Node h = head;
+            //AQS队列中存在多个阻塞的节点
             if (h != null && h != tail) {
                 int ws = h.waitStatus;
+                //如果节点状态为SIGNAL，表示当前节点的线程需要被唤醒
                 if (ws == Node.SIGNAL) {
+                    //通过CAS操作修改SIGNAL的状态为0，如果此时CAS失败，则说明已经有当前节点的线程状态被修改了，
+                    //不需要唤醒，继续下一次循环即可。
                     if (!compareAndSetWaitStatus(h, Node.SIGNAL, 0))
                         continue;            // loop to recheck cases
                     unparkSuccessor(h);
                 }
+                //如果ws是初始状态，则修改该节点状态为 PROPAGATE
                 else if (ws == 0 &&
                          !compareAndSetWaitStatus(h, 0, Node.PROPAGATE))
                     continue;                // loop on failed CAS
