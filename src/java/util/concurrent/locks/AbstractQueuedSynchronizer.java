@@ -800,7 +800,6 @@ public abstract class AbstractQueuedSynchronizer
             // If successor needs signal, try to set pred's next-link
             // so it will get one. Otherwise wake it up to propagate.
             // 如果当前节点不是尾节点，或者当前节点是尾节点但是CAS设置尾节点失败，
-            // 或者当前节点是尾节点但是CAS设置尾节点成功但是CAS设置当前节点的前驱节点的后继节点失败
 
             // 如果前驱节点不是头节点，以及前驱节点是SIGNAL状态或者前驱节点的状态设置为SIGNAL成功，并且前驱节点的线程不为空
             // 将当前的节点的后继节点设置为前驱节点的后继节点
@@ -901,9 +900,10 @@ public abstract class AbstractQueuedSynchronizer
      * @return {@code true} if interrupted
      */
     private final boolean parkAndCheckInterrupt() {
-        //调用park使线进入waitting状态
+        //调用park使线进入waiting状态
+        //如果调用了Thread.currentThread().interrupt()，该方法也会被返回，但是LockSupport.park不会清除中断位
         LockSupport.park(this);
-        //如果被唤醒，查看自己是否已经被中断了
+        //如果被唤醒，查看自己是否已经被中断了，该操作会清除中断位
         return Thread.interrupted();
     }
 
@@ -951,6 +951,8 @@ public abstract class AbstractQueuedSynchronizer
                 //检查前一个节点的状态，预判当前锁失败的线程是否要挂起
                 if (shouldParkAfterFailedAcquire(p, node) &&
                     parkAndCheckInterrupt())
+                    //因为parkAndCheckInterrupt里面调用了Thread.interrupted()会清除中断位，并且进入该条件，说明产生过终端
+                    //因此这里需要将中断标记置为true，让用户线程对中断进行处理
                     interrupted = true;
             }
         } finally {
@@ -1282,6 +1284,7 @@ public abstract class AbstractQueuedSynchronizer
     public final void acquire(int arg) {
         if (!tryAcquire(arg) &&
             acquireQueued(addWaiter(Node.EXCLUSIVE), arg))
+            //acquireQueued返回true,表示存在中断的情况，需要调用以下方法进行设置中断标记为true
             selfInterrupt();
     }
 
