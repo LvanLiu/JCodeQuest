@@ -259,9 +259,13 @@ public class ReentrantReadWriteLock
          * and the upper the shared (reader) hold count.
          */
 
+        //int 32位，高16位存储读锁的数量，低16位存储写锁的数量
         static final int SHARED_SHIFT   = 16;
+        //将1左移16位，作为读锁的基本单位
         static final int SHARED_UNIT    = (1 << SHARED_SHIFT);
+        //最大的读锁数量
         static final int MAX_COUNT      = (1 << SHARED_SHIFT) - 1;
+        //高16位的掩码，因为写锁是获取低16位，利用源码，将高16位置为0即可
         static final int EXCLUSIVE_MASK = (1 << SHARED_SHIFT) - 1;
 
         /** Returns the number of shared holds represented in count  */
@@ -270,12 +274,15 @@ public class ReentrantReadWriteLock
         static int exclusiveCount(int c) { return c & EXCLUSIVE_MASK; }
 
         /**
+         * 计数器
          * A counter for per-thread read hold counts.
          * Maintained as a ThreadLocal; cached in cachedHoldCounter
          */
         static final class HoldCounter {
+            //表示某个读线程的重入的次数
             int count = 0;
             // Use id, not reference, to avoid garbage retention
+            //表示当前前线的tid, 可以用来唯一标识一个线程
             final long tid = getThreadId(Thread.currentThread());
         }
 
@@ -291,6 +298,7 @@ public class ReentrantReadWriteLock
         }
 
         /**
+         * 读线程计数器
          * The number of reentrant read locks held by current thread.
          * Initialized only in constructor and readObject.
          * Removed whenever a thread's read hold count drops to 0.
@@ -298,6 +306,7 @@ public class ReentrantReadWriteLock
         private transient ThreadLocalHoldCounter readHolds;
 
         /**
+         * 缓存计数器
          * The hold count of the last thread to successfully acquire
          * readLock. This saves ThreadLocal lookup in the common case
          * where the next thread to release is the last one to
