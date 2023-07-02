@@ -403,6 +403,8 @@ public class ReentrantReadWriteLock
             int w = exclusiveCount(c);
             if (c != 0) {
                 // (Note: if c != 0 and w == 0 then shared count != 0)
+                // 因为读锁和写锁都是同一个更新state, 如果state(c)不为0, 说明有线程持有锁，但是w==0, 那就只剩下读锁了
+                // 如果有读锁持有，或者有写锁持有，但是持有锁的线程不是当前线程，那么就返回false（到AQS中进行排队）
                 if (w == 0 || current != getExclusiveOwnerThread())
                     return false;
                 if (w + exclusiveCount(acquires) > MAX_COUNT)
