@@ -270,7 +270,11 @@ public class ReentrantReadWriteLock
 
         /** Returns the number of shared holds represented in count  */
         static int sharedCount(int c)    { return c >>> SHARED_SHIFT; }
-        /** Returns the number of exclusive holds represented in count  */
+
+        /**
+         * 采用位运算得到state低16位的值，并以该值来判断当前state的重入次数
+         * Returns the number of exclusive holds represented in count
+         */
         static int exclusiveCount(int c) { return c & EXCLUSIVE_MASK; }
 
         /**
@@ -378,7 +382,9 @@ public class ReentrantReadWriteLock
         protected final boolean tryRelease(int releases) {
             if (!isHeldExclusively())
                 throw new IllegalMonitorStateException();
+            //递减锁的次数，由于写锁的重入次数保存在低位，所以直接按十进制减即可
             int nextc = getState() - releases;
+            //计算写锁的重入次数，如果为0，则说明释放锁成功
             boolean free = exclusiveCount(nextc) == 0;
             if (free)
                 setExclusiveOwnerThread(null);
@@ -400,6 +406,7 @@ public class ReentrantReadWriteLock
              */
             Thread current = Thread.currentThread();
             int c = getState();
+            //从state中计算当前获得写锁的线程数量，由于写锁是互斥的，所以如果能够获得多个，就说明只能是重入的情况。
             int w = exclusiveCount(c);
             if (c != 0) {
                 // (Note: if c != 0 and w == 0 then shared count != 0)
@@ -407,12 +414,14 @@ public class ReentrantReadWriteLock
                 // 如果有读锁持有，或者有写锁持有，但是持有锁的线程不是当前线程，那么就返回false（到AQS中进行排队）
                 if (w == 0 || current != getExclusiveOwnerThread())
                     return false;
+                //如果是线程重入，则判断重入次数是否大于65535, 如果大于则抛出异常
                 if (w + exclusiveCount(acquires) > MAX_COUNT)
                     throw new Error("Maximum lock count exceeded");
                 // Reentrant acquire
                 setState(c + acquires);
                 return true;
             }
+            //writerShouldBlock()判断写锁是否应该阻塞，在非公平模式下，写锁不需要先阻塞，而是直接通过CAS竞争锁
             if (writerShouldBlock() ||
                 !compareAndSetState(c, c + acquires))
                 return false;
@@ -472,15 +481,21 @@ public class ReentrantReadWriteLock
              *    apparently not eligible or CAS fails or count
              *    saturated, chain to version with full retry loop.
              */
+            //获得当前线程
             Thread current = Thread.currentThread();
+            //获取线程状态
             int c = getState();
+            //如果写锁或独占锁的持有者不是当前线程，则返回-1，到AQS中进行排队
             if (exclusiveCount(c) != 0 &&
                 getExclusiveOwnerThread() != current)
                 return -1;
+            //获得读锁数量
             int r = sharedCount(c);
+            //当readerShouldBlock()返回false，且读锁数量小于MAX_COUNT(65535)时，通过CAS竞争读锁
             if (!readerShouldBlock() &&
                 r < MAX_COUNT &&
                 compareAndSetState(c, c + SHARED_UNIT)) {
+                //竞争到读锁，r==0表示第一次获得读锁
                 if (r == 0) {
                     firstReader = current;
                     firstReaderHoldCount = 1;
