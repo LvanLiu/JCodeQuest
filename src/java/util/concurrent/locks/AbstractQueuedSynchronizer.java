@@ -1538,6 +1538,8 @@ public abstract class AbstractQueuedSynchronizer
     }
 
     /**
+     * 这个方法的目的是避免写锁无限等待的问题。
+     *
      * Returns {@code true} if the apparent first queued thread, if one
      * exists, is waiting in exclusive mode.  If this method returns
      * {@code true}, and the current thread is attempting to acquire in
@@ -1548,6 +1550,8 @@ public abstract class AbstractQueuedSynchronizer
      */
     final boolean apparentlyFirstQueuedIsExclusive() {
         Node h, s;
+        //如果当前同步队列head节点的下一个节点是独占锁节点，那么该方法会返回true,表示当前来获取读锁的线程需要排队
+        //如果当前同步队列head节点的下一个节点是共享锁节点，那么该方法会返回false,表示当前来获取读锁的线程允许通过CAS修改互斥锁状态
         return (h = head) != null &&
             (s = h.next)  != null &&
             !s.isShared()         &&

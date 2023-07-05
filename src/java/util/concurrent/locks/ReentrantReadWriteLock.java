@@ -278,7 +278,8 @@ public class ReentrantReadWriteLock
         static int exclusiveCount(int c) { return c & EXCLUSIVE_MASK; }
 
         /**
-         * 计数器
+         * HoldCounter可以表示某个线程对应的重入次数。
+         *
          * A counter for per-thread read hold counts.
          * Maintained as a ThreadLocal; cached in cachedHoldCounter
          */
@@ -291,6 +292,9 @@ public class ReentrantReadWriteLock
         }
 
         /**
+         * 采用ThreadLocal来进行线程隔离，也就是说每个线程调用readHolds.get()都会返回一个和当前线程绑定的HoldCounter对象。
+         * 也就能够实现针对每个线程记录读锁的重入次数的功能。
+         *
          * ThreadLocal subclass. Easiest to explicitly define for sake
          * of deserialization mechanics.
          */
@@ -500,8 +504,12 @@ public class ReentrantReadWriteLock
                     firstReader = current;
                     firstReaderHoldCount = 1;
                 } else if (firstReader == current) {
+                    //表示第一次获得读锁的线程为当前线程，需要记录重入次数
                     firstReaderHoldCount++;
                 } else {
+                    //采用ThreadLocal来保存每个线程获得读锁的次数
+                    //当通过CAS抢占读锁时，通过state变量记录总的读锁次数，还使用HoleCounter以线程为单位记录每个线程获得读锁的次数，
+                    //之所以要这样设计，是因为state无法记录每个线程获得读锁的重入次数
                     HoldCounter rh = cachedHoldCounter;
                     if (rh == null || rh.tid != getThreadId(current))
                         cachedHoldCounter = rh = readHolds.get();
@@ -511,6 +519,7 @@ public class ReentrantReadWriteLock
                 }
                 return 1;
             }
+            //CAS执行失败，通过以下方法尝试获取共享锁
             return fullTryAcquireShared(current);
         }
 
