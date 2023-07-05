@@ -435,17 +435,24 @@ public class ReentrantReadWriteLock
 
         protected final boolean tryReleaseShared(int unused) {
             Thread current = Thread.currentThread();
+            //以下主要是先更新每个线程读锁的重入次数
             if (firstReader == current) {
+                //释放读锁的线程是第一个线程，如果firstReaderHoldCount == 1说明没有重入的情况，将firstReader置为null即可
                 // assert firstReaderHoldCount > 0;
                 if (firstReaderHoldCount == 1)
                     firstReader = null;
                 else
+                    //存在重入的情况，需要进行递减
                     firstReaderHoldCount--;
             } else {
+                //释放读锁的线程不是第一个线程，则需要获取最后一个线程的计数器
                 HoldCounter rh = cachedHoldCounter;
+                //如果当前释放锁的线程不是最后一个线程，则需要通过ThradLocal获得当前线程的计数器
                 if (rh == null || rh.tid != getThreadId(current))
                     rh = readHolds.get();
+                //获得当前线程的重入数
                 int count = rh.count;
+                //count <= 1 说明没有重入的情况，直接移除即可
                 if (count <= 1) {
                     readHolds.remove();
                     if (count <= 0)
@@ -453,6 +460,7 @@ public class ReentrantReadWriteLock
                 }
                 --rh.count;
             }
+            //通过自旋释放读锁
             for (;;) {
                 int c = getState();
                 int nextc = c - SHARED_UNIT;
@@ -489,7 +497,7 @@ public class ReentrantReadWriteLock
             Thread current = Thread.currentThread();
             //获取线程状态
             int c = getState();
-            //如果写锁或独占锁的持有者不是当前线程，则返回-1，到AQS中进行排队
+            //如果写锁或独占锁的持有者不是当前线程，则返回-1，到AQS中进行排队, getExclusiveOwnerThread() != current 主要是判断能否进行锁降级
             if (exclusiveCount(c) != 0 &&
                 getExclusiveOwnerThread() != current)
                 return -1;
