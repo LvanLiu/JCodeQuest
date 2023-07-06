@@ -1380,6 +1380,9 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
     }
 
     /**
+     * 安全地关闭线程池。调用该方法之后，线程池不再接收新的任务，并且等到已经接收到的任务执行完成之后
+     * 再关闭线程池。
+     *
      * Initiates an orderly shutdown in which previously submitted
      * tasks are executed, but no new tasks will be accepted.
      * Invocation has no additional effect if already shut down.
@@ -1405,6 +1408,8 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
     }
 
     /**
+     * 强制关闭，不管任务是否完成。
+     *
      * Attempts to stop all actively executing tasks, halts the
      * processing of waiting tasks, and returns a list of the tasks
      * that were awaiting execution. These tasks are drained (removed)
@@ -1437,6 +1442,9 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         return tasks;
     }
 
+    /**
+     * 调用{@link #shutdown()} 或 {@link #shutdownNow()}后，该方法会返回true
+     */
     public boolean isShutdown() {
         return ! isRunning(ctl.get());
     }
@@ -1457,10 +1465,20 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         return ! isRunning(c) && runStateLessThan(c, TERMINATED);
     }
 
+    /**
+     * 调用{@link #shutdown()} 或 {@link #shutdownNow()}后,需要等到已经提交到线程池中的任务完成后,
+     * 也就是线程池中的所有线程都停止之后,该方法才会返回true
+     */
     public boolean isTerminated() {
         return runStateAtLeast(ctl.get(), TERMINATED);
     }
 
+    /**
+     * 阻塞主线程一段时间，等待线程池终止(timeout和unit分别表示超时时间和超时时间单位)。如果等待指定时间
+     * 之后发现线程池的状态已经关闭，则直接返回true，否则返回false。它比较适合搭配{@link #shutdown()}方法使用，
+     * 因为{@link #shutdown()}为安全关闭方法，如果线程池中的某个工作任务一直被阻塞，就会导致这个线程池一直无法关闭，
+     * 有了这个方法，我们可以设置一个安全等待时间，超过这个时间无法关闭，就可以强制关闭。
+     */
     public boolean awaitTermination(long timeout, TimeUnit unit)
         throws InterruptedException {
         long nanos = unit.toNanos(timeout);
