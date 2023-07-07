@@ -384,21 +384,74 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
     private final AtomicInteger ctl = new AtomicInteger(ctlOf(RUNNING, 0));
     /**
      * 这里复用了int的位数，由于一个int占用4个字节，也就是32位，线程池采用一个32位的整数来存储线程状态
-     * 和线程数量，其中
+     * 和线程数量，其中高3位表示线程状态，低29位表示线程数量。
+     *
+     * COUNT_BITS 表示用来统计数量的位数。
      */
     private static final int COUNT_BITS = Integer.SIZE - 3;
+
+    /**
+     * 表示线程池的容量(1<<29)-1,也就是表示一个线程池最多能够创建的线程数量
+     * 1 的二进制表示是: 0000 0000 0000 0000 0000 0000 0000 0001
+     * 左移 29 位之后是: 0010 0000 0000 0000 0000 0000 0000 0000
+     * 再减去 1 之后是:  0001 1111 1111 1111 1111 1111 1111 1111
+     * 这意味着，一个线程池最大的线程数量转换为10进制为: 536870911,完成能够满足实际需求
+     */
     private static final int CAPACITY   = (1 << COUNT_BITS) - 1;
 
     // runState is stored in the high-order bits
+    /**
+     * -1的二进制各个位上全部都是1，因为负数涉及符合位，负数通过原码->反码->补码的方式来表示
+     * -1的原码是: 1000 0000 0000 0000 0000 0000 0000 0001
+     * -1的反码是: 1111 1111 1111 1111 1111 1111 1111 1110
+     * -1的补码是: 1111 1111 1111 1111 1111 1111 1111 1111
+     * 所以RUNNING的值是：1110 0000 0000 0000 0000 0000 0000 0000
+     *
+     * 运行状态可以接受新的任务并处理，可以处理阻塞队列中的任务
+     */
     private static final int RUNNING    = -1 << COUNT_BITS;
+    /**
+     * 0的二进制是0，左移29位之后，也是0
+     * 关闭状态不接收新的任务，但是可以继续处理阻塞队列中的任务
+     */
     private static final int SHUTDOWN   =  0 << COUNT_BITS;
+    /**
+     * STOP的状态值是: 0010 0000 0000 0000 0000 0000 0000 0000
+     * 停止状态，不接收新的任务，不处理阻塞队列中的任务，同时会中断正在处理的任务
+     */
     private static final int STOP       =  1 << COUNT_BITS;
+    /**
+     * TIDYING的状态值是: 0100 0000 0000 0000 0000 0000 0000 0000
+     * 过渡状态，该状态意味着所有的任务都执行完了，并且线程池中已经没有有效的工作线程。该状态下会调用terminated()方法
+     * 进入TERMINATED状态
+     */
     private static final int TIDYING    =  2 << COUNT_BITS;
+    /**
+     * TERMINATED的状态值是: 0110 0000 0000 0000 0000 0000 0000 0000
+     * 终止状态，terminated()方法执行完毕之后的状态
+     */
     private static final int TERMINATED =  3 << COUNT_BITS;
 
     // Packing and unpacking ctl
+
+    /**
+     * 从c这个整形变量中获取线程状态
+     * CAPACITY的二进制是：0001 1111 1111 1111 1111 1111 1111 1111
+     * ~CAPACITY的二进制是：1110 0000 0000 0000 0000 0000 0000 0000
+     * 再通过 & 运算，得到高三位，也就是线程的状态
+     */
     private static int runStateOf(int c)     { return c & ~CAPACITY; }
+
+    /**
+     * 得到当前的线程数量
+     * CAPACITY的二进制是：0001 1111 1111 1111 1111 1111 1111 1111
+     * 再通过 & 运算，去掉高三位，得到低29位，也就是线程的数量
+     */
     private static int workerCountOf(int c)  { return c & CAPACITY; }
+
+    /**
+     * 用来更新线程池中的 ctl 值，也就是线程状态和线程数量
+     */
     private static int ctlOf(int rs, int wc) { return rs | wc; }
 
     /*
@@ -1370,15 +1423,23 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
          * and so reject the task.
          */
         int c = ctl.get();
+        //根据ctl当前的值来判断当前线程数量是否小于核心线程数量，主要解决线程池中核心线程未初始化的问题
         if (workerCountOf(c) < corePoolSize) {
+            //调用addWorker方法创建一个核心线程并启动，同时把当前任务command传递进去直接执行
             if (addWorker(command, true))
                 return;
+            //如果执行到这一步，说明addWorker创建线程失败，有可能是线程池的状态发生变更，需要再次获取线程状态值
             c = ctl.get();
         }
+        //运行到这里，说明当前线程的数量已经超过了核心线程数
+        //如果线程池处于运行状态，并且将任务添加到阻塞队列中
         if (isRunning(c) && workQueue.offer(command)) {
+            //加入队列成功，再次检查线程池的状态
             int recheck = ctl.get();
+            //线程池处于未运行状态，将任务从阻塞队列中移除，同时执行拒绝策略
             if (! isRunning(recheck) && remove(command))
                 reject(command);
+            //
             else if (workerCountOf(recheck) == 0)
                 addWorker(null, false);
         }
