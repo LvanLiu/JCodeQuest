@@ -377,8 +377,15 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * we can only terminate if, after seeing that it is empty, we see
      * that workerCount is 0 (which sometimes entails a recheck -- see
      * below).
+     *
+     * ctl用来存储线程状态和线程数量的原子变量，它初始化了线程状态和线程数量，
+     * 初始状态为RUNNING，线程数量为0.
      */
     private final AtomicInteger ctl = new AtomicInteger(ctlOf(RUNNING, 0));
+    /**
+     * 这里复用了int的位数，由于一个int占用4个字节，也就是32位，线程池采用一个32位的整数来存储线程状态
+     * 和线程数量，其中
+     */
     private static final int COUNT_BITS = Integer.SIZE - 3;
     private static final int CAPACITY   = (1 << COUNT_BITS) - 1;
 
