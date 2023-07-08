@@ -773,6 +773,7 @@ public abstract class AbstractQueuedSynchronizer
         if (node == null)
             return;
 
+        //首先释放绑定的 thread 对象
         node.thread = null;
 
         //获取当前节点的前驱节点，若该节点是取消状态，就循环向前获取，直到获取到一个有效的前驱节点。
@@ -1042,6 +1043,7 @@ public abstract class AbstractQueuedSynchronizer
                 if (p == head) {
                     int r = tryAcquireShared(arg);
                     if (r >= 0) {
+                        //如果获取锁成功，调用setHeadAndPropagate设置当前节点为头节点，并唤醒同样等待在Shared模式下的线程
                         setHeadAndPropagate(node, r);
                         p.next = null; // help GC
                         if (interrupted)
