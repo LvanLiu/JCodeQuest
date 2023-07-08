@@ -1760,16 +1760,21 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
     public void setCorePoolSize(int corePoolSize) {
         if (corePoolSize < 0)
             throw new IllegalArgumentException();
+        //delta表示需要新增多少个核心线程
         int delta = corePoolSize - this.corePoolSize;
         this.corePoolSize = corePoolSize;
+        //如果新的核心线程数比原来的小，则需要中断一些空闲线程
         if (workerCountOf(ctl.get()) > corePoolSize)
             interruptIdleWorkers();
+        //需要新增核心线程
         else if (delta > 0) {
             // We don't really know how many new threads are "needed".
             // As a heuristic, prestart enough new workers (up to new
             // core size) to handle the current number of tasks in
             // queue, but stop if queue becomes empty while doing so.
+            //有可能队列的任务数比较少，所以这里取delta和队列中任务数的最小值，避免创建太多的核心线程
             int k = Math.min(delta, workQueue.size());
+            //要求k至少大于1，每次线程核心线程后，都判断一下队列中是否还有任务，如果没有则不再创建线程
             while (k-- > 0 && addWorker(null, true)) {
                 if (workQueue.isEmpty())
                     break;
