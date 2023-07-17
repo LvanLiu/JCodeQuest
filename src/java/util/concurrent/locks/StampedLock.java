@@ -316,7 +316,7 @@ public class StampedLock implements java.io.Serializable {
     private static final long WBIT  = 1L << LG_READERS;
     // 获取读锁个数，判断当前是否属于读锁状态
     private static final long RBITS = WBIT - 1L;
-    // 记录最大读锁大小（126）
+    // 记录最大读锁大小（126），防御性编程
     private static final long RFULL = RBITS - 1L;
     // 判断 state 读写锁状态
     private static final long ABITS = RBITS | WBIT;
@@ -1016,7 +1016,9 @@ public class StampedLock implements java.io.Serializable {
      */
     private long tryIncReaderOverflow(long s) {
         // assert (s & ABITS) >= RFULL;
+        //(s & ABITS) >= RFULL说明有以下两种情况：有写锁、无写锁，state等于RFULL，或者等于RFULL+1
         if ((s & ABITS) == RFULL) {
+            //如果读锁数量==RFULL，那么就把溢出的数量加到 readerOverflow 上
             if (U.compareAndSwapLong(this, STATE, s, s | RBITS)) {
                 ++readerOverflow;
                 state = s;
@@ -1221,11 +1223,18 @@ public class StampedLock implements java.io.Serializable {
         //第一部分：自旋-入队
         for (int spins = -1;;) {
             WNode h;
-            //头节点等于尾节点，说明快轮到自己了，通过自旋不断尝试获取读锁
+            /*
+             头节点等于尾节点，有以下四种清空：
+             - 无锁状态下
+             - 锁被占用，但是没有节点等待
+             - 锁被占有，第一个节点初始化的时候，有短暂的时间头尾节点相等
+             - 锁被占有，等待队列只有一个节点，该节点持有锁
+             */
             if ((h = whead) == (p = wtail)) {
                 //自旋，不断尝试获取锁
                 for (long m, s, ns;;) {
-                    //如果当前读锁数少于最大读锁数，那么就通过CAS来尝试获取锁，如果读锁个数达到了最大值，那么就做溢出处理
+                    //如果当前读锁数少于最大读锁数，同时没有写锁占用，那么就通过CAS来尝试获取锁
+                    //当数量溢出的时候会用readOverflow 变量进行额外的保存。
                     if ((m = (s = state) & ABITS) < RFULL ?
                         U.compareAndSwapLong(this, STATE, s, ns = s + RUNIT) :
                         (m < WBIT && (ns = tryIncReaderOverflow(s)) != 0L))
@@ -1251,7 +1260,7 @@ public class StampedLock implements java.io.Serializable {
                     }
                 }
             }
-            //如果尾节点为空，初始化头节点和尾节点
+            //如果头节点和尾节点都是空的话，开始初始化队列，构造一个写模式的节点，然后把头节点和尾节点指针指向它
             if (p == null) { // initialize queue
                 WNode hd = new WNode(WMODE, null);
                 if (U.compareAndSwapObject(this, WHEAD, null, hd))
@@ -1282,7 +1291,7 @@ public class StampedLock implements java.io.Serializable {
                         U.compareAndSwapObject(h, WCOWAIT, c, c.cowait) &&
                         (w = c.thread) != null) // help release
                         U.unpark(w);
-                    //如果
+                    //如果尾节点的前一个节点是头节点，或者头节点等于尾节点，或者尾节点的前一个节点为空
                     if (h == (pp = p.prev) || h == p || pp == null) {
                         long m, s, ns;
                         do {
