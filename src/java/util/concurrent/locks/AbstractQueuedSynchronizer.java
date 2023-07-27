@@ -1728,6 +1728,11 @@ public abstract class AbstractQueuedSynchronizer
      * @return true if is reacquiring
      */
     final boolean isOnSyncQueue(Node node) {
+        /*
+         * 判断这个节点是否在AQS队列之中，当前线程必然不在，所以第一次判断的结果是false，
+         * 后续如果有其他线程调用了condition.signal方法，那么该线程又会移动到AQS队列之中。
+         * 所以这个条件的判断表示其他线程还没有调用signal方法，需要通过LockSupport.park方法阻塞当前线程
+         */
         if (node.waitStatus == Node.CONDITION || node.prev == null)
             return false;
         if (node.next != null) // If has successor, it must be on queue
@@ -1810,6 +1815,10 @@ public abstract class AbstractQueuedSynchronizer
     }
 
     /**
+     * 当前锁的释放和lock.unlock()释放锁还是有一些小的差异的，fullyRelease是彻底释放锁，
+     * 由于ReentrantLock是允许重入的，所以在当前方法中不管是否是重入，都需要把锁状态设置为0
+     * 否则其他线程仍然无法获得锁。
+     *
      * Invokes release with current state value; returns saved state.
      * Cancels node and throws exception on failure.
      * @param node the condition node for this wait
@@ -1818,7 +1827,11 @@ public abstract class AbstractQueuedSynchronizer
     final int fullyRelease(Node node) {
         boolean failed = true;
         try {
+            //得到当前的锁状态值
             int savedState = getState();
+            //即得到当前线程的重入次数，直接用这个state减去总的重入次数即可。
+            //注意，saveState 需要保存起来，后续该线程被唤醒后，锁的重入次数必须要恢复到阻塞之前
+            //否则会导致后续释放时出现异常
             if (release(savedState)) {
                 failed = false;
                 return savedState;
@@ -1946,12 +1959,15 @@ public abstract class AbstractQueuedSynchronizer
          */
         private Node addConditionWaiter() {
             Node t = lastWaiter;
+            //如果等待队列不为空，则尝试清理失效的节点
             // If lastWaiter is cancelled, clean out.
             if (t != null && t.waitStatus != Node.CONDITION) {
                 unlinkCancelledWaiters();
                 t = lastWaiter;
             }
+            //把当前节点包装成Node节点，节点类型为CONDITION
             Node node = new Node(Thread.currentThread(), Node.CONDITION);
+            //把当前节点添加到链表中
             if (t == null)
                 firstWaiter = node;
             else
@@ -2127,22 +2143,39 @@ public abstract class AbstractQueuedSynchronizer
          *      {@link #acquire} with saved state as argument.
          * <li> If interrupted while blocked in step 4, throw InterruptedException.
          * </ol>
+         * 主要做以下三件事情：
+         * - 把当前线程添加到等待队列中，通过 addConditionWaiter() 方法实现
+         * - 释放锁，使用fullyRelease()方法来完成锁的彻底释放
+         * - 阻塞当前线程，仍然采用LockSupport.park(this)方法来阻塞当前线程
          */
         public final void await() throws InterruptedException {
             if (Thread.interrupted())
                 throw new InterruptedException();
+            //创建一个新的节点，节点的状态为CONDITION，采用的数据结构仍然是链表
             Node node = addConditionWaiter();
+            //释放当前锁，得到锁的状态，并唤醒AQS队列中的一个线程
             int savedState = fullyRelease(node);
             int interruptMode = 0;
+            //如果当前节点没有在同步队列中，即还没有被signal，则将当前线程阻塞
+            //第一次判断的结果是false，因为前面已经释放锁了
             while (!isOnSyncQueue(node)) {
+                //第一次总是 park 自己，开始阻塞等待
                 LockSupport.park(this);
+                //线程判断自己在等待过程中是否被中断了，如果没有中断，则再次循环，会在isOnSyncQueue中判断自己是否在队列中
+                //isOnSyncQueue判断当前node状态，如果是CONDITION状态，或者不在队列上了，就继续阻塞
+                //isOnSyncQueue判断当前node状态，如果还在队列上且不是CONDITION状态，就结束循环和阻塞
                 if ((interruptMode = checkInterruptWhileWaiting(node)) != 0)
                     break;
             }
+            //interruptMode != THROW_IE：表示这个线程没有成功将node入队，但signal执行了enq()方法让其入队
+            //将这个变量设置成 REINTERRUPT
             if (acquireQueued(node, savedState) && interruptMode != THROW_IE)
                 interruptMode = REINTERRUPT;
+            //如果node的下一个等待者不是null，则进行清理，清理condition队列上的节点
+            //如果是null，就不用清理了
             if (node.nextWaiter != null) // clean up if cancelled
                 unlinkCancelledWaiters();
+            //如果线程被中断了，则需要抛出异常或者什么都不做
             if (interruptMode != 0)
                 reportInterruptAfterWait(interruptMode);
         }
