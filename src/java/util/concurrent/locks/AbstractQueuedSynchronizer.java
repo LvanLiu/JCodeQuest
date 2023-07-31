@@ -1765,6 +1765,8 @@ public abstract class AbstractQueuedSynchronizer
     }
 
     /**
+     * 将唤醒的节点转移到同步队列。
+     *
      * Transfers a node from a condition queue onto sync queue.
      * Returns true if successful.
      * @param node the node
@@ -1775,6 +1777,7 @@ public abstract class AbstractQueuedSynchronizer
         /*
          * If cannot change waitStatus, the node has been cancelled.
          */
+        //如果CAS失败，说明当前节点状态为 CANCELLED, 此时需要继续查找等待队列中的下一个节点
         if (!compareAndSetWaitStatus(node, Node.CONDITION, 0))
             return false;
 
@@ -1786,7 +1789,9 @@ public abstract class AbstractQueuedSynchronizer
          */
         Node p = enq(node);
         int ws = p.waitStatus;
+        //如果上一个节点的状态被取消，或者尝试上一个节点的状态为SIGNAL失败了（SIGNAL表示next节点需要停止阻塞）
         if (ws > 0 || !compareAndSetWaitStatus(p, ws, Node.SIGNAL))
+            //唤醒输入节点上的线程
             LockSupport.unpark(node.thread);
         return true;
     }
@@ -1984,8 +1989,11 @@ public abstract class AbstractQueuedSynchronizer
          */
         private void doSignal(Node first) {
             do {
+                //first出队，firstWaiter指向下一个节点
                 if ( (firstWaiter = first.nextWaiter) == null)
+                    //如果第二节点为空，则尾部也为空
                     lastWaiter = null;
+                //原来的头部first的后继置空，help for gc
                 first.nextWaiter = null;
             } while (!transferForSignal(first) &&
                      (first = firstWaiter) != null);
@@ -2042,6 +2050,8 @@ public abstract class AbstractQueuedSynchronizer
         // public methods
 
         /**
+         * 调用该方法会唤醒处于Condition等待队列的线程，被唤醒的线程需要等待消费者线程调用lock.unlock()方法来释放锁之后才能真正执行。
+         *
          * Moves the longest-waiting thread, if one exists, from the
          * wait queue for this condition to the wait queue for the
          * owning lock.
@@ -2050,10 +2060,13 @@ public abstract class AbstractQueuedSynchronizer
          *         returns {@code false}
          */
         public final void signal() {
+            //如果当前线程不是持有该锁的线程，就抛出异常
             if (!isHeldExclusively())
                 throw new IllegalMonitorStateException();
             Node first = firstWaiter;
+            //如果等待队列不为空，则说明有可以被唤醒的线程
             if (first != null)
+                //唤醒头节点
                 doSignal(first);
         }
 
